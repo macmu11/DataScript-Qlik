@@ -1,0 +1,433 @@
+//***************************************INCLUDES
+
+$(Must_Include=[lib://AMBIENTE\GET_AMBIENTE.txt]);
+
+$(Must_Include=[lib://$(S_AMBIENTE)\CFG\CONFIG.txt]);
+
+$(Must_Include=[lib://$(S_AMBIENTE)\$(S_ETAPA)\$(S_MODULO)\CFG\CONFIG.txt]);  //Comentar para Apps
+
+$(Must_Include=[lib://$(S_AMBIENTE)\$(S_ETAPA)\$(S_MODULO)\CFG\CONNECT.txt]); //Solo para DATA
+
+ 
+
+//***************************************VARIABLES
+
+ 
+
+ 
+
+/////////////////////////////////////////////////////////////////CONFIGURACION
+
+ 
+
+LET S_TABLE_NAME        = 'GPI000';
+
+LET S_TIPO_CARGA          = 1;                                                                                             //0 = FULL, 1 = ICNREMENTAL (confiugrar CSV correspondiente)
+
+SET S_CLAVE_PRIMARIA = "PY$UKI&'-'&PY$LTN&'-'&PY$SLT&'-'&PYSCSQ";                              //Campos que forman la clave primaria (EJ: "HF$IUT&'-'&HF$DTC")
+
+SET S_TIPO_FECHA  = 0 ; // 0 = LA FECHA DE CARGA POSEE FORMATO DE FECHA GREGORIANA
+
+                                                                                      // 1 = LA FECHA DE CARGA POSEE FORMATO DE FECHA JULIANA                                                                             
+
+ 
+
+ 
+
+//************************************SEGMENTACION
+
+LET S_SEGMENTACION  = 1;                                                                               //0 = SIN SEGMENTACION DE QVD´S, 1 CON SEGMENTACION DE QVD'S (Actualizar Seccion Segmentacion)
+
+SET S_REGLA_SEGMENTACION = "FLOOR(MonthStart(PY$BDT))"; //COLOCAR EL CAMPO DE FECHA CORRESPONDIENTE
+
+SET S_REGLA_SEGMENTACION_OUTPUT = "DATE(S_SEGMENTO, 'YYYYMM')";
+
+ 
+
+  /*--------------------------------------------------------------------------------------*/
+
+call GetBaseOwner('$(S_TABLE_NAME)', S_BASE, S_OWNER);
+
+ 
+
+///////////////////////////////////////////////////////////// CONFIGURACION INCREMENTAL
+
+ 
+
+IF $(S_TIPO_CARGA) = 1 THEN
+
+  /*-------------------------------------------------------------------
+
+  El tipo de carga esta definido con los siguientes valores
+
+  0 - Carga Incremental - Inicial
+
+  1 - Carga Incremental
+
+  --------------------------------------------------------------------*/
+
+  TIPO_EXTRACCION:
+
+  LOAD
+
+      TABLA,
+
+      TIPO_CARGA_INCREMENTAL,
+
+      FECHA_INCREMENTAL,
+
+      FECHA_FULL_DESDE,
+
+      FECHA_FULL_HASTA,
+
+      CAMPO
+
+  FROM [lib://$(S_AMBIENTE)/$(S_ETAPA)\$(S_MODULO)\CFG\CONFIG_INCREMENTAL.csv]
+
+  (txt, utf8, embedded labels, delimiter is ';', msq)
+
+      Where
+
+      TABLA = '$(S_TABLE_NAME)'
+
+    ;
+
+
+ LET S_CARGA_INCREMENTAL = PEEK('TIPO_CARGA_INCREMENTAL', 0 , 'TIPO_EXTRACCION');
+
+LET S_CAMPO = PEEK('CAMPO', 0 , 'TIPO_EXTRACCION');
+
+
+ //DEFINICION DE VARIABLES DE FECHA PARA DEFINIR EL RANGO DE LA CARGA
+
+IF ($(S_CARGA_INCREMENTAL) = 0) THEN
+
+ 
+
+              LET S_MIN_FECHA = FLOOR(PEEK('FECHA_FULL_DESDE', 0 , 'TIPO_EXTRACCION'));
+
+    LET S_MAX_FECHA = FLOOR(PEEK('FECHA_FULL_HASTA', 0 , 'TIPO_EXTRACCION'));
+
+
+ ELSE
+
+             LET S_MIN_FECHA = FLOOR(PEEK('FECHA_INCREMENTAL', 0 , 'TIPO_EXTRACCION')-5);
+
+    LET S_MAX_FECHA = FLOOR(TODAY());
+
+   
+
+ ENDIF
+
+
+ drop Table TIPO_EXTRACCION;
+
+ 
+
+ //SE ESTABLECE SI EL FORMATO DE FECHA PARA PODER HACER LA EXTRACCIÓN
+
+ 
+
+ IF ($(S_TIPO_FECHA) = 0) THEN
+
+              LET S_MIN_FECHA_EXT = DATE($(S_MIN_FECHA), 'YYYY-MM-DD');
+
+    LET S_MAX_FECHA_EXT = DATE($(S_MAX_FECHA), 'YYYY-MM-DD');
+
+   
+
+ ELSEIF ($(S_TIPO_FECHA) = 1) THEN
+
+             LET S_MIN_FECHA_EXT =  (NUM(RIGHT(YEAR($(S_MIN_FECHA)), 2)) + 100)& NUM(DayNumberOfYear($(S_MIN_FECHA)),'000');
+
+              LET S_MAX_FECHA_EXT =  (NUM(RIGHT(YEAR($(S_MAX_FECHA)), 2)) + 100)& NUM(DayNumberOfYear($(S_MAX_FECHA)),'000');
+
+   
+
+ ENDIF
+
+
+             
+
+ENDIF
+
+ 
+
+ 
+
+///////////////////////////////////////////////EXTRACCION
+
+ 
+
+IF $(S_TIPO_CARGA) = 0; //Carga Full
+
+ 
+
+  '$(S_TABLE_NAME)':
+
+  LOAD $(S_CLAVE_PRIMARIA) as %KEY_$(S_TABLE_NAME),
+
+                             *
+
+  ;
+
+  SQL SELECT *
+
+  FROM $(S_BASE).$(S_OWNER).$(S_TABLE_NAME)
+
+  ;
+
+ 
+
+ELSE //Carga Incremental
+
+ 
+
+'$(S_TABLE_NAME)':
+
+  LOAD  $(S_CLAVE_PRIMARIA) as %KEY_$(S_TABLE_NAME),
+
+                             *
+
+  ;
+
+  SQL SELECT *
+
+  FROM $(S_BASE).$(S_OWNER).$(S_TABLE_NAME)
+
+  WHERE
+
+ 
+
+  "$(S_CAMPO)" >= '$(S_MIN_FECHA_EXT)' AND
+
+  "$(S_CAMPO)" <=  '$(S_MAX_FECHA_EXT)'
+
+  ;
+
+ 
+
+ENDIF
+
+ 
+
+ 
+
+///////////////////////////////////////////////STORE SIN SEGMENTACION
+
+ 
+
+IF $(S_SEGMENTACION) = 0 THEN
+
+ 
+
+              IF $(S_TIPO_CARGA) = 1 AND QvdCreateTime('LIB://$(S_AMBIENTE)/$(S_ETAPA)\$(S_MODULO)\QVD\$(S_ETAPA)_$(S_MODULO)_$(S_TABLE_NAME).QVD') THEN
+
+               Concatenate('$(S_TABLE_NAME)')
+
+      LOAD *
+
+      FROM [LIB://$(S_AMBIENTE)/$(S_ETAPA)\$(S_MODULO)\QVD\$(S_ETAPA)_$(S_MODULO)_$(S_TABLE_NAME).QVD](QVD)
+
+      WHERE
+
+      NOT Exists(%KEY_$(S_TABLE_NAME));              
+
+    ENDIF
+
+    STORE '$(S_TABLE_NAME)' INTO [LIB://$(S_AMBIENTE)/$(S_ETAPA)\$(S_MODULO)\QVD\$(S_ETAPA)_$(S_MODULO)_$(S_TABLE_NAME).QVD](QVD);
+
+              drop Table '$(S_TABLE_NAME)';
+
+ENDIF
+
+ 
+
+/////////////////////////////////////////////UPDATE INCREMENTAL
+
+ 
+
+IF $(S_TIPO_CARGA) = 1 AND $(S_CARGA_INCREMENTAL) = 1 THEN
+
+ 
+
+  IF NoOfRows('$(S_TABLE_NAME)') > 0 THEN
+
+ 
+
+    FECHA_INCREMENTAL:
+
+    LOAD DISTINCT
+
+    '$(S_TABLE_NAME)'                                AS TABLA,
+
+   
+
+     DATE(IF ($(S_TIPO_FECHA) = 1,
+
+      yearstart(date#(left(MAX($(S_CAMPO)),1)+19&mid(MAX($(S_CAMPO)),2,2),'YYYY'))+(right(MAX($(S_CAMPO)),3)-1)
+
+        ,MAX($(S_CAMPO))))                         AS FECHA_INCREMENTAL, 
+
+     //SE TRASNFORMA LA FECHA DE FORMATO PARA QUE PUEDA GUARDAR   EN FORMATO GREGORIANO
+
+        
+
+    1                                                                                               AS TIPO_CARGA_INCREMENTAL,
+
+    '$(S_CAMPO)'                                                         AS CAMPO,
+
+    NULL()                                                                                     AS FECHA_FULL_DESDE,
+
+    NULL()                                                                                     AS FECHA_FULL_HASTA
+
+   
+
+    RESIDENT '$(S_TABLE_NAME)'
+
+    ;
+
+ 
+
+    Concatenate (FECHA_INCREMENTAL)
+
+    LOAD *
+
+    FROM [lib://$(S_AMBIENTE)/$(S_ETAPA)\$(S_MODULO)\CFG\CONFIG_INCREMENTAL.csv]
+
+    (txt, utf8, embedded labels, delimiter is ';', msq)
+
+    WHERE
+
+    TABLA <> '$(S_TABLE_NAME)'
+
+    ;
+
+ 
+
+    STORE FECHA_INCREMENTAL INTO [lib://$(S_AMBIENTE)/$(S_ETAPA)\$(S_MODULO)\CFG\CONFIG_INCREMENTAL.csv](txt,delimiter is ';');
+
+    DROP TABLE FECHA_INCREMENTAL;
+
+ 
+
+  ENDIF        
+
+ 
+
+ENDIF
+
+ 
+
+//////////////////////////////////////////////////////////SEGMENTACION  CON STORE
+
+ 
+
+IF $(S_SEGMENTACION) = 1 THEN
+
+
+ TABLA_SEGMENTO:
+
+  LOAD Distinct
+
+              '$(S_TABLE_NAME)'                                    as TABLA,
+
+    $(S_REGLA_SEGMENTACION)               AS CAMPO_SEGMENTACION
+
+  RESIDENT '$(S_TABLE_NAME)';
+
+ 
+
+    
+
+  LET S_ITERACION = NoOfRows('TABLA_SEGMENTO');
+
+  FOR i = 0 TO ($(S_ITERACION)-1)
+
+ 
+
+    LET S_SEGMENTO  = PEEK('CAMPO_SEGMENTACION',$(i),'TABLA_SEGMENTO');
+
+ 
+
+    DATOS_SEGMENTO:
+
+    LOAD *,
+
+               '$(S_SEGMENTO)' as SEGMENTO
+
+               
+
+    RESIDENT '$(S_TABLE_NAME)'
+
+    WHERE
+
+    $(S_REGLA_SEGMENTACION) = '$(S_SEGMENTO)';
+
+ 
+
+ 
+
+  LET S_SEGMENTO_NAME = $(S_REGLA_SEGMENTACION_OUTPUT);
+
+ 
+
+              TRACE $(S_SEGMENTO_NAME);
+
+   
+
+    IF $(S_TIPO_CARGA) = 1 AND QvdCreateTime('LIB://$(S_AMBIENTE)/$(S_ETAPA)\$(S_MODULO)\QVD\$(S_TABLE_NAME)/$(S_ETAPA)_$(S_MODULO)_$(S_TABLE_NAME)_$(S_SEGMENTO_NAME).QVD') THEN
+
+      Concatenate(DATOS_SEGMENTO)
+
+      LOAD *
+
+      FROM [LIB://$(S_AMBIENTE)/$(S_ETAPA)\$(S_MODULO)\QVD\$(S_TABLE_NAME)/$(S_ETAPA)_$(S_MODULO)_$(S_TABLE_NAME)_$(S_SEGMENTO_NAME).QVD](QVD)
+
+      WHERE
+
+      NOT Exists(%KEY_$(S_TABLE_NAME))
+
+      ;   
+
+    ENDIF
+
+   STORE DATOS_SEGMENTO INTO [LIB://$(S_AMBIENTE)/$(S_ETAPA)\$(S_MODULO)\QVD\$(S_TABLE_NAME)/$(S_ETAPA)_$(S_MODULO)_$(S_TABLE_NAME)_$(S_SEGMENTO_NAME).QVD](QVD);
+
+    DROP TABLE DATOS_SEGMENTO;
+
+ 
+
+ 
+
+  NEXT i
+
+             
+
+  IF (QvdCreateTime('LIB://$(S_AMBIENTE)/$(S_ETAPA)\$(S_MODULO)\CFG\SEGMENTOS_ACTUALIZADOS.QVD')) THEN
+
+     Concatenate(TABLA_SEGMENTO)
+
+     LOAD Distinct
+
+       TABLA,
+
+       CAMPO_SEGMENTACION
+
+     From [LIB://$(S_AMBIENTE)/$(S_ETAPA)\$(S_MODULO)\CFG\SEGMENTOS_ACTUALIZADOS.QVD] (QVD)
+
+     WHERE TABLA <> '$(S_TABLE_NAME)';
+
+  ENDIF
+
+  STORE TABLA_SEGMENTO INTO [LIB://$(S_AMBIENTE)/$(S_ETAPA)\$(S_MODULO)\CFG\SEGMENTOS_ACTUALIZADOS.QVD](QVD);
+
+
+  DROP TABLES $(S_TABLE_NAME), TABLA_SEGMENTO;        
+
+ENDIF
+
+ 
+
+EXIT SCRIPT
+
