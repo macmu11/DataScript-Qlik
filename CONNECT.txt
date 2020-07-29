@@ -1,0 +1,21 @@
+let S_BASE = '';
+let S_OWNER= '';
+SET S_CARGA_INCREMENTAL = -1;
+
+
+sub GetBaseOwner (S_TABLE_NAME, S_BASE, S_OWNER) //PROCESO DE EXTRACCION DE BASE Y OWNER
+  BASE_OWNER:
+  LOAD
+      Tabla,
+      Base,
+      Owner
+  FROM [lib://$(S_AMBIENTE)/DATA\JDE\CFG\Mapeo Tablas Owner.xlsx]
+  (ooxml, embedded labels, table is Sheet1)
+  where Tabla = '$(S_TABLE_NAME)';
+  
+  S_BASE = peek('Base',0,'BASE_OWNER');
+  S_OWNER = peek('Owner',0,'BASE_OWNER');
+  DROP TABLE BASE_OWNER;
+end sub;
+
+LIB CONNECT TO 'SEMILLON-QLIK';
